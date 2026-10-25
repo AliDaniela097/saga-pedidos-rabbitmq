@@ -1,0 +1,16 @@
+# Dependencias y compilados (cada proyecto tiene además su propio .gitignore)
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Variables de entorno y secretos
+.env
+.env.*
+
+# Registros
+*.log
+npm-debug.log*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
