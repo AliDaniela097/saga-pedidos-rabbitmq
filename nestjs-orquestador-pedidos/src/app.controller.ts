@@ -1,4 +1,4 @@
-import { Body, Controller, Inject, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Inject, Post } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { randomUUID } from 'crypto';
 import { firstValueFrom, timeout } from 'rxjs';
@@ -25,7 +25,29 @@ export class AppController {
     @Inject('PAGO_SERVICE') private readonly pagoClient: ClientProxy,
     @Inject('NOTIFICACIONES_SERVICE')
     private readonly notiClient: ClientProxy,
+    @Inject('TRAZAS_SERVICE') private readonly trazasClient: ClientProxy,
   ) {}
+
+  // Envía una traza al frontend para que muestre el recorrido del pedido.
+  private traza(
+    event: string,
+    correlationId: string,
+    status: string,
+    detalle?: string,
+  ) {
+    try {
+      this.trazasClient.emit('traza', {
+        timestamp: new Date().toISOString(),
+        service: 'OrquestadorPedidos',
+        event,
+        correlation_id: correlationId,
+        status,
+        detalle,
+      });
+    } catch {
+      /* una traza nunca debe romper el flujo del negocio */
+    }
+  }
 
   // send() = preguntar y ESPERAR la respuesta del servicio destino.
   // Si el servicio no responde en 5 s o falla, se trata como un paso fallido.
@@ -47,10 +69,26 @@ export class AppController {
   async crearPedidoOrquestado(
     @Body() body: { productoId: number; cantidad: number },
   ) {
+    if (
+      !Number.isInteger(body?.productoId) ||
+      !Number.isInteger(body?.cantidad) ||
+      body.cantidad < 1
+    ) {
+      throw new BadRequestException(
+        'productoId y cantidad deben ser enteros, y cantidad mayor que 0',
+      );
+    }
+    const { productoId, cantidad } = body;
     const correlationId = 'cid-' + randomUUID().slice(0, 8);
-    const pedido = { pedidoId: correlationId, ...body, estado: 'Creado' };
+    const pedido = { pedidoId: correlationId, productoId, cantidad, estado: 'Creado' };
     PEDIDOS[correlationId] = pedido;
-    const datos = { correlationId, ...body };
+    const datos = { correlationId, productoId, cantidad };
+    this.traza(
+      'PedidoCreado',
+      correlationId,
+      'ok',
+      `producto ${productoId} x${cantidad} (orquestada)`,
+    );
 
     // PASO 1: reservar inventario
     const reserva = await this.llamar(
@@ -64,8 +102,15 @@ export class AppController {
       status: reserva.ok ? 'ok' : 'error',
       error: reserva.error,
     });
+    this.traza(
+      'OrqReservarInventario',
+      correlationId,
+      reserva.ok ? 'ok' : 'error',
+      reserva.error,
+    );
     if (!reserva.ok) {
       pedido.estado = 'Rechazado'; // no hay nada que compensar todavía
+      this.traza('PedidoRechazado', correlationId, 'error', reserva.error);
       return pedido;
     }
 
@@ -77,6 +122,12 @@ export class AppController {
       status: pago.ok ? 'ok' : 'error',
       error: pago.error,
     });
+    this.traza(
+      'OrqProcesarPago',
+      correlationId,
+      pago.ok ? 'ok' : 'error',
+      pago.error,
+    );
     if (!pago.ok) {
       // El ORQUESTADOR decide la compensación del paso anterior.
       const liberar = await this.llamar(
@@ -90,22 +141,36 @@ export class AppController {
         status: liberar.ok ? 'compensated' : 'error',
         error: liberar.error,
       });
+      this.traza(
+        'OrqCompensarInventario',
+        correlationId,
+        liberar.ok ? 'compensated' : 'error',
+        liberar.error,
+      );
       pedido.estado = 'Cancelado';
+      this.traza(
+        'PedidoCancelado',
+        correlationId,
+        'cancelled',
+        'el pago falló y el orquestador liberó el inventario',
+      );
       return pedido;
     }
 
     // PASO 3: notificar
-    const noti = await this.llamar(
-      this.notiClient,
-      'orq_notificar',
-      { correlationId },
-    );
+    const noti = await this.llamar(this.notiClient, 'orq_notificar', {
+      correlationId,
+    });
     registrar({
       correlation_id: correlationId,
       paso: 'notificar',
       status: noti.ok ? 'ok' : 'error',
       error: noti.error,
     });
+    this.traza('OrqNotificar', correlationId, noti.ok ? 'ok' : 'error', noti.error);
+    if (!noti.ok) {
+      this.traza('NotificacionFallida', correlationId, 'error', noti.error);
+    }
     pedido.estado = noti.ok ? 'Confirmado' : 'PagadoSinNotificar';
     return pedido;
   }

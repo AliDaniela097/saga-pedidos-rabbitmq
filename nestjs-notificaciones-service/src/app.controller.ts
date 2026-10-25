@@ -1,39 +1,64 @@
-import { Controller } from '@nestjs/common';
-import { EventPattern, MessagePattern, Payload } from '@nestjs/microservices';
+import { Controller, Inject } from '@nestjs/common';
+import {
+  ClientProxy,
+  EventPattern,
+  MessagePattern,
+  Payload,
+} from '@nestjs/microservices';
 
 @Controller()
 export class AppController {
-  @EventPattern('pago_procesado')
-  notificar(@Payload() data: { correlationId: string }) {
-    console.log(
-      JSON.stringify({
+  constructor(
+    @Inject('TRAZAS_SERVICE') private readonly trazasClient: ClientProxy,
+  ) {}
+
+  // Envía una traza al frontend para que muestre el recorrido del pedido.
+  private traza(
+    event: string,
+    correlationId: string,
+    status: string,
+    detalle?: string,
+  ) {
+    try {
+      this.trazasClient.emit('traza', {
         timestamp: new Date().toISOString(),
         service: 'NotificacionesService',
-        event_received: 'PagoProcesado',
-        status: 'processed',
-        correlation_id: data.correlationId,
-      }),
-    );
-    console.log(
-      `✅ Pedido ${data.correlationId} confirmado. Se notificó al cliente.`,
-    );
+        event,
+        correlation_id: correlationId,
+        status,
+        detalle,
+      });
+    } catch {
+      /* una traza nunca debe romper el flujo del negocio */
+    }
   }
 
-  // --- Versión ORQUESTADA (request-response): responde al orquestador ---
-  @MessagePattern('orq_notificar')
-  notificarOrquestado(@Payload() data: { correlationId: string }) {
+  private confirmar(correlationId: string, evento: string, detalle?: string) {
     console.log(
       JSON.stringify({
         timestamp: new Date().toISOString(),
         service: 'NotificacionesService',
-        event_received: 'orq_notificar',
+        event_received: evento,
         status: 'processed',
-        correlation_id: data.correlationId,
+        correlation_id: correlationId,
       }),
     );
-    console.log(
-      `✅ Pedido ${data.correlationId} confirmado. Se notificó al cliente.`,
-    );
+    console.log(`✅ Pedido ${correlationId} confirmado. Se notificó al cliente.`);
+    this.traza('PedidoConfirmado', correlationId, 'processed', detalle);
+  }
+
+  // ---------- Saga COREOGRAFIADA (eventos) ----------
+
+  @EventPattern('pago_procesado')
+  notificar(@Payload() data: { correlationId: string }) {
+    this.confirmar(data.correlationId, 'PagoProcesado');
+  }
+
+  // ---------- Saga ORQUESTADA (request-response) ----------
+
+  @MessagePattern('orq_notificar')
+  notificarOrquestado(@Payload() data: { correlationId: string }) {
+    this.confirmar(data.correlationId, 'orq_notificar', 'a pedido del orquestador');
     return { ok: true };
   }
 }

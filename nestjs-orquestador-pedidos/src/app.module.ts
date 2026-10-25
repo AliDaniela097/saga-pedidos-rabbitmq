@@ -18,6 +18,7 @@ const cliente = (name: string, queue: string) => ({
       cliente('INVENTARIO_SERVICE', 'inventario_queue'),
       cliente('PAGO_SERVICE', 'pago_queue'),
       cliente('NOTIFICACIONES_SERVICE', 'notificaciones_queue'),
+      cliente('TRAZAS_SERVICE', 'trazas_queue'),
     ]),
   ],
   controllers: [AppController],

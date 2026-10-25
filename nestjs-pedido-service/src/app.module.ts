@@ -2,18 +2,21 @@ import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { AppController } from './app.controller.js';
 
+const cliente = (name: string, queue: string) => ({
+  name,
+  transport: Transport.RMQ as const,
+  options: {
+    urls: ['amqp://localhost:5672'],
+    queue,
+    queueOptions: { durable: false },
+  },
+});
+
 @Module({
   imports: [
     ClientsModule.register([
-      {
-        name: 'INVENTARIO_SERVICE',
-        transport: Transport.RMQ,
-        options: {
-          urls: ['amqp://localhost:5672'],
-          queue: 'inventario_queue',
-          queueOptions: { durable: false },
-        },
-      },
+      cliente('INVENTARIO_SERVICE', 'inventario_queue'),
+      cliente('TRAZAS_SERVICE', 'trazas_queue'),
     ]),
   ],
   controllers: [AppController],
