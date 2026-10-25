@@ -11,6 +11,7 @@ Semana 6 de Integración de Sistemas. Cuatro microservicios NestJS que cooperan 
 | `nestjs-pago-service` | Procesa el pago; falla ~40 % de las veces (simulado) | `pago_queue` |
 | `nestjs-notificaciones-service` | Último paso: confirma el pedido al cliente | `notificaciones_queue` |
 | `nestjs-orquestador-pedidos` | Versión orquestada: llama paso a paso con `send()` y decide la compensación | HTTP 3002 |
+| `nestjs-frontend-saga` | Interfaz web para crear productos, hacer pedidos y ver el recorrido de cada evento | HTTP 3003 · `trazas_queue` |
 
 ## Flujo de la Saga coreografiada
 
@@ -31,6 +32,19 @@ Cada servicio ejecuta una transacción local y publica un evento. Ningún servic
 ## Versión orquestada
 
 `POST /pedidos-orquestados` en el orquestador ejecuta, en orden y esperando respuesta (`send()` + `@MessagePattern`): reservar inventario, procesar pago y notificar. Si el pago falla, el propio orquestador ordena liberar el inventario. Los servicios destino exponen para esto los patrones `orq_reservar_inventario`, `orq_liberar_inventario`, `orq_procesar_pago` y `orq_notificar`.
+
+## Frontend
+
+`nestjs-frontend-saga` muestra la Saga en una página web: se crean productos, se hacen pedidos (coreografiados u orquestados) y se despliega el recorrido de cada uno. Para eso cada servicio publica una **traza** (evento, servicio, hora y `correlation_id`) en `trazas_queue`, y el frontend las reúne en `data/pedidos.json`. Las trazas son solo observación: si el frontend está apagado, el negocio sigue funcionando.
+
+## Datos guardados en JSON
+
+| Archivo | Contenido |
+|---|---|
+| `nestjs-inventario-service/data/inventario.json` | Productos, stock y reservas (sobrevive a reinicios) |
+| `nestjs-frontend-saga/data/pedidos.json` | Historial de pedidos y su recorrido (últimos 200) |
+
+Se crean solos al arrancar y no se suben a GitHub (están en `.gitignore`).
 
 ## Trazabilidad
 
@@ -57,9 +71,9 @@ Consola de administración: http://localhost:15672 (usuario `guest`, contraseña
 cd nestjs-pedido-service && npm install
 ```
 
-(repetir en las otras cuatro carpetas)
+(repetir en las otras cinco carpetas)
 
-3. Arrancar cada proyecto en su propia terminal con `npm run start`, en este orden: inventario, pago, notificaciones, pedido y, si se quiere la versión orquestada, el orquestador.
+3. Arrancar cada proyecto en su propia terminal con `npm run start`, en este orden: inventario, pago, notificaciones, pedido y, si se quiere la versión orquestada, el orquestador. Por último el frontend, y abrir http://localhost:3003
 
 4. Probar. Coreografiada:
 
@@ -73,11 +87,11 @@ Orquestada:
 Invoke-RestMethod -Method Post -Uri http://localhost:3002/pedidos-orquestados -ContentType "application/json" -Body '{"productoId":2,"cantidad":1}'
 ```
 
-Stock inicial (en memoria): producto 1 = 10, producto 2 = 15, producto 3 = 5. Al reiniciar Inventario vuelve a esos valores.
+Productos iniciales (se crean solos la primera vez): Teclado mecánico (10), Mouse inalámbrico (15) y Monitor 24" (5), con ids 1, 2 y 3. Después los productos y el stock se conservan en `data/inventario.json`.
 
 ## Limitaciones conocidas
 
-- El estado (pedidos y stock) vive en memoria; se pierde al reiniciar cada servicio.
+- Los productos y el historial de pedidos se guardan en JSON, pero `PedidoService` y el Orquestador conservan sus pedidos solo en memoria.
 - Las colas son no durables (`durable: false`), como pide la guía: si RabbitMQ se reinicia, los mensajes pendientes se pierden.
 - Si falla Notificaciones no hay compensación del pago.
 - No hay endpoint para consultar el estado de un pedido; se verifica por los logs.
@@ -119,5 +133,5 @@ Se construyó el mismo flujo (reservar inventario, cobrar, notificar, con compen
 
 - Herramienta(s): Claude (Anthropic)
 - Nivel de uso: 2-3 (borrador y revisión)
-- Qué se le pidió: guía paso a paso del taller, explicación de conceptos (emit vs send, Saga, correlation_id), escritura del código de los pasos 2 a 8 a partir de la guía, interpretación de errores y de los logs, diagrama de arquitectura en FigJam, estructura del repositorio, y un borrador de la comparación de arriba
+- Qué se le pidió: guía paso a paso del taller, explicación de conceptos (emit vs send, Saga, correlation_id), escritura del código de los pasos 2 a 8 a partir de la guía, interpretación de errores y de los logs, diagrama de arquitectura en FigJam, estructura del repositorio, un borrador de la comparación de arriba y la construcción del frontend extra (persistencia en JSON, trazas y la interfaz web)
 - Qué se modificó/verificó manualmente: levanté RabbitMQ con Docker, creé los proyectos, arranqué cada servicio en su propia terminal, ejecuté los pedidos, provoqué los fallos de pago y verifiqué en los logs de las terminales la compensación completa en ambas versiones, eliminé los `.git` internos y subí el repositorio a GitHub
