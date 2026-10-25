@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SagaPedidos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="contenedor">
+
+    <!-- ===== Barra superior ===== -->
+    <header class="nav">
+      <a class="logo" href="#inicio"><span class="logo-marca" aria-hidden="true"></span>SagaPedidos</a>
+      <nav class="pills" aria-label="Secciones">
+        <a class="pill activo" href="#inicio">Inicio</a>
+        <a class="pill" href="#pedido">Hacer pedido</a>
+        <a class="pill" href="#productos">Productos</a>
+        <a class="pill" href="#pedidos">Pedidos</a>
+        <a class="pill" href="#como-funciona">Cómo funciona</a>
+      </nav>
+      <div class="nav-derecha">
+        <span class="conexion" id="estadoConexion">Conectando…</span>
+        <a class="btn btn-oscuro" href="#pedido">Nuevo pedido</a>
+      </div>
+    </header>
+
+    <!-- ===== Inicio ===== -->
+    <section class="hero" id="inicio">
+      <div class="visual">
+        <div class="chips-top">
+          <span class="chip-vidrio">Coreografía</span>
+          <span class="chip-vidrio">Orquestación</span>
+          <span class="chip-vidrio">Saga</span>
+        </div>
+        <div class="flujo-vidrio">
+          <p class="flujo-titulo">Así viaja un pedido</p>
+          <ol class="flujo">
+            <li><b>1</b><div><strong>Pedido</strong><small>anuncia que se creó el pedido</small></div></li>
+            <li><b>2</b><div><strong>Inventario</strong><small>reserva el stock</small></div></li>
+            <li><b>3</b><div><strong>Pago</strong><small>cobra (falla ~40 % a propósito)</small></div></li>
+            <li><b>4</b><div><strong>Notificaciones</strong><small>confirma al cliente</small></div></li>
+          </ol>
+          <p class="flujo-comp"><span class="punto punto-mal"></span>Si el pago falla, Inventario devuelve el stock y el pedido queda <strong>Cancelado</strong>.</p>
+        </div>
+      </div>
+
+      <div class="hero-texto">
+        <h1>Crea pedidos y mira cómo viaja cada evento</h1>
+        <div class="etiquetas">
+          <span class="etiqueta destacada">Eventos</span>
+          <span class="etiqueta">Saga</span>
+          <span class="etiqueta">Compensación</span>
+          <span class="etiqueta">Trazabilidad</span>
+        </div>
+        <div class="tarjeta-oscura">
+          <div class="guia">
+            <span class="sello">Guía rápida</span>
+            <h2>Tres pasos para probarlo</h2>
+            <ol class="pasos">
+              <li>Crea un producto o usa los que ya existen.</li>
+              <li>Haz un pedido y elige cómo se coordina.</li>
+              <li>Abre su recorrido en <a href="#pedidos">Pedidos</a>.</li>
+            </ol>
+          </div>
+          <div class="cifras" aria-label="Resumen">
+            <div><strong id="cifraTotal">0</strong><span>pedidos</span></div>
+            <div><strong id="cifraOk">0</strong><span>confirmados</span></div>
+            <div><strong id="cifraMal">0</strong><span>cancelados</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Hacer pedido ===== -->
+    <section class="buscador" id="pedido">
+      <h2>Haz un pedido</h2>
+      <form id="formPedido" class="campos" autocomplete="off">
+        <label>Producto
+          <select id="selProducto" required></select>
+        </label>
+        <label>Cantidad
+          <input id="inpCantidad" type="number" min="1" max="1000" value="1" required>
+        </label>
+        <label>Cómo se coordina
+          <select id="selModo">
+            <option value="coreografiada">Coreografiada (eventos)</option>
+            <option value="orquestada">Orquestada (un director)</option>
+          </select>
+        </label>
+        <button class="btn btn-oscuro btn-grande" id="btnPedido" type="submit">Crear pedido</button>
+      </form>
+      <p class="ayuda" id="ayudaModo"></p>
+    </section>
+
+    <!-- ===== Productos ===== -->
+    <section class="seccion" id="productos">
+      <div class="seccion-cabecera">
+        <h2>Productos</h2>
+        <p>Los guarda el servicio de Inventario en <code>data/inventario.json</code>.</p>
+      </div>
+      <div class="productos-layout">
+        <form class="tarjeta formulario-producto" id="formProducto" autocomplete="off">
+          <h3>Nuevo producto</h3>
+          <label>Nombre
+            <input id="inpNombre" type="text" maxlength="60" placeholder="Ej. Audífonos" required>
+          </label>
+          <label>Stock inicial
+            <input id="inpStock" type="number" min="0" max="100000" value="10" required>
+          </label>
+          <button class="btn btn-oscuro" type="submit">Crear producto</button>
+        </form>
+        <div class="grilla-productos" id="grillaProductos" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- ===== Pedidos ===== -->
+    <section class="seccion" id="pedidos">
+      <div class="seccion-cabecera">
+        <h2>Pedidos</h2>
+        <p>Se actualiza solo. Abre un pedido para ver el recorrido de sus eventos.</p>
+      </div>
+      <div class="filtros" id="filtros" role="group" aria-label="Filtrar por estado"></div>
+      <div class="lista-pedidos" id="listaPedidos" aria-live="polite"></div>
+    </section>
+
+    <!-- ===== Cómo funciona ===== -->
+    <section class="seccion" id="como-funciona">
+      <div class="seccion-cabecera">
+        <h2>Cómo funciona</h2>
+        <p>Esta pantalla no hace la Saga: solo la muestra.</p>
+      </div>
+      <div class="tres">
+        <article class="tarjeta">
+          <span class="numero">1</span>
+          <h3>Coreografía</h3>
+          <p>Nadie dirige. Pedido publica un evento, Inventario reacciona y publica el suyo, y así hasta Notificaciones. Si el pago falla, Inventario devuelve el stock y avisa a Pedido.</p>
+        </article>
+        <article class="tarjeta">
+          <span class="numero">2</span>
+          <h3>Orquestación</h3>
+          <p>Un orquestador llama a cada servicio en orden y espera su respuesta. Si el pago falla, él mismo ordena liberar el inventario. El flujo está en un solo lugar.</p>
+        </article>
+        <article class="tarjeta">
+          <span class="numero">3</span>
+          <h3>Trazabilidad</h3>
+          <p>Cada pedido tiene un <code>correlation_id</code> que se crea una sola vez y viaja en todos los eventos. Con él se reconstruye el recorrido que ves en la lista de pedidos.</p>
+        </article>
+      </div>
+      <div class="tarjeta nota">
+        <h3>Qué verás en los estados</h3>
+        <ul class="leyenda">
+          <li><span class="insignia ok">Confirmado</span> el pago salió bien y se notificó.</li>
+          <li><span class="insignia mal">Cancelado</span> el pago falló y se devolvió el stock (compensación).</li>
+          <li><span class="insignia aviso">Rechazado</span> no había stock suficiente.</li>
+          <li><span class="insignia info">En proceso</span> los eventos todavía viajan: el resultado llega después (consistencia eventual).</li>
+        </ul>
+        <p class="ayuda">Los datos se guardan en archivos JSON dentro de cada proyecto (carpeta <code>data</code>). El historial de pedidos está en <code>nestjs-frontend-saga/data/pedidos.json</code>.</p>
+      </div>
+    </section>
+
+    <footer class="pie">Taller semana 6 · Integración de Sistemas · NestJS + RabbitMQ</footer>
+  </div>
+
+  <div class="aviso" id="aviso" role="status" aria-live="polite" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

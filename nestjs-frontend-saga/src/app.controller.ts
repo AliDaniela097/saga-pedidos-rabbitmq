@@ -1,0 +1,133 @@
+import {
+  BadGatewayException,
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Post,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { ClientProxy, EventPattern, Payload } from '@nestjs/microservices';
+import { firstValueFrom, timeout } from 'rxjs';
+import { listar, registrarPedido, registrarTraza } from './historial.js';
+import type { Modo } from './historial.js';
+
+type Producto = { id: number; nombre: string; stock: number };
+type Respuesta = { ok: boolean; error?: string; producto?: Producto };
+
+// A dónde se envía el pedido según la forma de coordinar la Saga.
+const URL_PEDIDO: Record<Modo, string> = {
+  coreografiada: process.env.PEDIDO_URL ?? 'http://localhost:3000/pedidos',
+  orquestada: process.env.ORQUESTADOR_URL ?? 'http://localhost:3002/pedidos-orquestados',
+};
+
+@Controller('api')
+export class AppController {
+  constructor(
+    @Inject('INVENTARIO_SERVICE') private readonly inventario: ClientProxy,
+  ) {}
+
+  // El navegador nunca habla con RabbitMQ: habla con este backend por HTTP,
+  // y este backend le pregunta a Inventario por RabbitMQ.
+  private async consultar<T>(patron: string, data: unknown): Promise<T> {
+    try {
+      return await firstValueFrom(
+        this.inventario.send<T>(patron, data).pipe(timeout(5000)),
+      );
+    } catch {
+      throw new ServiceUnavailableException(
+        'El servicio de Inventario no responde. ¿Está arrancado?',
+      );
+    }
+  }
+
+  @Get('productos')
+  productos() {
+    return this.consultar<Producto[]>('listar_productos', {});
+  }
+
+  @Post('productos')
+  async crearProducto(@Body() body: { nombre?: unknown; stock?: unknown }) {
+    const r = await this.consultar<Respuesta>('crear_producto', {
+      nombre: body?.nombre,
+      stock: body?.stock,
+    });
+    if (!r.ok) throw new BadRequestException(r.error);
+    return r.producto;
+  }
+
+  @Post('productos/:id/reponer')
+  async reponer(@Param('id') id: string, @Body() body: { cantidad?: unknown }) {
+    const r = await this.consultar<Respuesta>('reponer_stock', {
+      id: Number(id),
+      cantidad: body?.cantidad,
+    });
+    if (!r.ok) throw new BadRequestException(r.error);
+    return r.producto;
+  }
+
+  @Post('pedidos')
+  async crearPedido(
+    @Body() body: { productoId?: unknown; cantidad?: unknown; modo?: unknown },
+  ) {
+    const productoId = Number(body?.productoId);
+    const cantidad = Number(body?.cantidad);
+    const modo = body?.modo;
+    if (!Number.isInteger(productoId) || productoId < 1) {
+      throw new BadRequestException('Elige un producto');
+    }
+    if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > 1000) {
+      throw new BadRequestException('La cantidad debe ser un entero entre 1 y 1000');
+    }
+    if (modo !== 'coreografiada' && modo !== 'orquestada') {
+      throw new BadRequestException('El modo debe ser coreografiada u orquestada');
+    }
+
+    const productos = await this.consultar<Producto[]>('listar_productos', {});
+    const producto = productos.find((p) => p.id === productoId);
+    if (!producto) throw new BadRequestException('El producto no existe');
+
+    let respuesta: { pedidoId?: unknown };
+    try {
+      const r = await fetch(URL_PEDIDO[modo], {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productoId, cantidad }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      respuesta = (await r.json()) as { pedidoId?: unknown };
+    } catch {
+      throw new BadGatewayException(
+        modo === 'coreografiada'
+          ? 'No responde PedidoService (puerto 3000). ¿Está arrancado?'
+          : 'No responde el Orquestador (puerto 3002). ¿Está arrancado?',
+      );
+    }
+    if (typeof respuesta.pedidoId !== 'string') {
+      throw new BadGatewayException('Respuesta inesperada del servicio de pedidos');
+    }
+
+    registrarPedido({
+      pedidoId: respuesta.pedidoId,
+      productoId,
+      productoNombre: producto.nombre,
+      cantidad,
+      modo,
+    });
+    return { pedidoId: respuesta.pedidoId };
+  }
+
+  @Get('pedidos')
+  pedidos() {
+    return listar();
+  }
+
+  // Los servicios publican aquí cada paso que dan (trazabilidad).
+  @EventPattern('traza')
+  recibirTraza(@Payload() traza: unknown) {
+    registrarTraza(traza);
+  }
+}
