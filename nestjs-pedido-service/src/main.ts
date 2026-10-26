@@ -4,16 +4,23 @@ import { AppModule } from './app.module.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // Ruta de salud: sirve para comprobar (y despertar) el servicio en la nube.
+  app
+    .getHttpAdapter()
+    .get('/health', (_req: any, res: any) =>
+      res.json({ estado: 'ok', servicio: 'PedidoService' }),
+    );
   app.connectMicroservice({
     transport: Transport.RMQ,
     options: {
-      urls: ['amqp://localhost:5672'],
+      urls: [process.env.RABBITMQ_URL ?? 'amqp://localhost:5672'],
       queue: 'pedido_queue',
       queueOptions: { durable: false },
     },
   });
   await app.startAllMicroservices();
-  await app.listen(3000);
-  console.log('PedidoService: HTTP en :3000 + escuchando pedido_queue');
+  const puerto = Number(process.env.PORT ?? 3000);
+  await app.listen(puerto);
+  console.log('PedidoService: HTTP en :' + puerto + ' + escuchando pedido_queue');
 }
 await bootstrap();

@@ -6,7 +6,7 @@ const cliente = (name: string, queue: string) => ({
   name,
   transport: Transport.RMQ as const,
   options: {
-    urls: ['amqp://localhost:5672'],
+    urls: [process.env.RABBITMQ_URL ?? 'amqp://localhost:5672'],
     queue,
     queueOptions: { durable: false },
   },

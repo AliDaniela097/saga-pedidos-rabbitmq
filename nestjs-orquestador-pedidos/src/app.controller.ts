@@ -5,6 +5,10 @@ import { firstValueFrom, timeout } from 'rxjs';
 
 type Resultado = { ok: boolean; error?: string };
 
+// Cuánto espera el orquestador la respuesta de cada servicio (en la nube, si un
+// servicio está dormido, conviene subirlo con la variable TIMEOUT_MS).
+const TIEMPO_ESPERA_MS = Number(process.env.TIMEOUT_MS ?? 5000);
+
 const PEDIDOS: Record<string, any> = {};
 
 function registrar(data: Record<string, unknown>) {
@@ -50,7 +54,7 @@ export class AppController {
   }
 
   // send() = preguntar y ESPERAR la respuesta del servicio destino.
-  // Si el servicio no responde en 5 s o falla, se trata como un paso fallido.
+  // Si el servicio no responde a tiempo o falla, se trata como un paso fallido.
   private async llamar(
     client: ClientProxy,
     patron: string,
@@ -58,7 +62,7 @@ export class AppController {
   ): Promise<Resultado> {
     try {
       return await firstValueFrom(
-        client.send<Resultado>(patron, data).pipe(timeout(5000)),
+        client.send<Resultado>(patron, data).pipe(timeout(TIEMPO_ESPERA_MS)),
       );
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };

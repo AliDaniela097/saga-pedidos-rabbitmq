@@ -3,7 +3,16 @@ import { AppModule } from './app.module.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  await app.listen(3002);
-  console.log('OrquestadorPedidos: HTTP en :3002 (POST /pedidos-orquestados)');
+  // Ruta de salud: sirve para comprobar (y despertar) el servicio en la nube.
+  app
+    .getHttpAdapter()
+    .get('/health', (_req: any, res: any) =>
+      res.json({ estado: 'ok', servicio: 'OrquestadorPedidos' }),
+    );
+  const puerto = Number(process.env.PORT ?? 3002);
+  await app.listen(puerto);
+  console.log(
+    'OrquestadorPedidos: HTTP en :' + puerto + ' (POST /pedidos-orquestados)',
+  );
 }
 await bootstrap();
