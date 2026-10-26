@@ -28,6 +28,11 @@
       </div>
     </header>
 
+    <div class="pausa" id="bannerPausa" hidden>
+      <span>En pausa por inactividad: así se ahorran las horas del plan gratis. Los servicios pueden dormirse.</span>
+      <button class="btn btn-oscuro btn-chico" id="btnReanudar" type="button">Reanudar</button>
+    </div>
+
     <!-- ===== Inicio ===== -->
     <section class="hero" id="inicio">
       <div class="visual">
@@ -94,6 +99,15 @@
         <button class="btn btn-oscuro btn-grande" id="btnPedido" type="submit">Crear pedido</button>
       </form>
       <p class="ayuda" id="ayudaModo"></p>
+
+      <div class="servicios" id="panelServicios" hidden>
+        <div class="servicios-cabecera">
+          <strong>Estado de los servicios</strong>
+          <button class="btn btn-claro btn-chico" id="btnDespertar" type="button">Despertar servicios</button>
+        </div>
+        <div class="servicios-lista" id="listaServicios"></div>
+        <p class="ayuda">En el plan gratis, cada servicio se duerme tras 15 minutos sin uso y tarda cerca de 1 minuto en despertar. Espera a que todos estén en “Activo” antes de hacer pedidos.</p>
+      </div>
     </section>
 
     <!-- ===== Productos ===== -->

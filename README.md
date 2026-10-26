@@ -46,6 +46,21 @@ Cada servicio ejecuta una transacción local y publica un evento. Ningún servic
 
 Se crean solos al arrancar y no se suben a GitHub (están en `.gitignore`).
 
+## Despliegue en la nube
+
+Guía paso a paso en [DESPLIEGUE.md](DESPLIEGUE.md): RabbitMQ en CloudAMQP y los 6 servicios en Render (plan gratis). Variables de entorno que usa el código (todas opcionales; sin ellas todo corre en local):
+
+| Variable | Qué hace | Por defecto |
+|---|---|---|
+| `RABBITMQ_URL` | Dirección de RabbitMQ | `amqp://localhost:5672` |
+| `PORT` | Puerto HTTP (Render lo asigna) | 3000 (Pedido), 3002 (Orquestador), 3003 (Frontend). Inventario, Pago y Notificaciones solo abren un puerto de salud si existe |
+| `TIMEOUT_MS` | Espera del Orquestador por cada servicio | 5000 |
+| `PEDIDO_URL`, `ORQUESTADOR_URL` | A dónde envía el frontend los pedidos | `localhost:3000` y `localhost:3002` |
+| `SALUD_PEDIDO`, `SALUD_ORQUESTADOR`, `SALUD_INVENTARIO`, `SALUD_PAGO`, `SALUD_NOTIFICACIONES` | Rutas `/health` que el frontend usa para despertar y vigilar los servicios | sin definir (el panel no aparece) |
+| `TIMEOUT_INVENTARIO_MS`, `TIMEOUT_PEDIDO_MS` | Esperas del frontend | 5000 y 60000 |
+
+Cada servicio responde `GET /health` para poder comprobarlo o despertarlo.
+
 ## Trazabilidad
 
 El `correlation_id` (`cid-xxxxxxxx`) se genera una sola vez (en Pedido o en el Orquestador) y cada servicio lo copia en sus logs JSON y en el evento siguiente. Buscando ese valor se reconstruye todo el recorrido, incluida la compensación.

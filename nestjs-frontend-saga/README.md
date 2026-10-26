@@ -39,6 +39,10 @@ El navegador nunca habla con RabbitMQ. El estado del pedido (Confirmado, Cancela
 2. En esta carpeta: `npm install` y luego `npm run start`.
 3. Abrir http://localhost:3003
 
+## En la nube
+
+Con las variables `SALUD_*` definidas (ver `DESPLIEGUE.md` en la raíz del repositorio) aparece el panel **Estado de los servicios**, que muestra cuáles están dormidos y permite despertarlos. La página se pausa sola tras 20 minutos sin actividad para no gastar las horas del plan gratis.
+
 ## Notas
 
 - Si arrancas este proyecto después de hacer pedidos, las trazas pendientes se procesan al arrancar (esperan en `trazas_queue` mientras RabbitMQ siga encendido).

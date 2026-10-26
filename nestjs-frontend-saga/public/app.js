@@ -52,6 +52,15 @@ const abiertos = new Set(); // pedidos con el recorrido desplegado
 let firmaProductos = '';
 let firmaPedidos = '';
 let temporizadorAviso = null;
+let servicios = [];
+let firmaServicios = '';
+let ultimaActividad = Date.now();
+let pausado = false;
+let ultimoDespertar = 0;
+
+// Para no gastar las horas del plan gratis: sin actividad se pausa la consulta automática.
+const MINUTOS_SIN_ACTIVIDAD = 20;
+const MINUTOS_ENTRE_DESPERTARES = 4; // menos de los 15 min en que se duermen
 
 // ---------- Utilidades ----------
 
@@ -271,6 +280,50 @@ function pintarCifras() {
   $('cifraMal').textContent = String(pedidos.filter((p) => p.estado === 'Cancelado').length);
 }
 
+// ---------- Servicios en la nube ----------
+
+const TEXTO_SERVICIO = { activo: 'Activo', despertando: 'Despertando…', 'sin respuesta': 'Dormido o sin respuesta' };
+
+function pintarServicios() {
+  const panel = $('panelServicios');
+  panel.hidden = servicios.length === 0; // en local no hay servicios que vigilar
+  const lista = $('listaServicios');
+  lista.replaceChildren();
+  for (const s of servicios) {
+    lista.appendChild(
+      el('span', { clase: 'chip-servicio ' + s.estado.split(' ')[0] }, [
+        el('i', { atributos: { 'aria-hidden': 'true' } }),
+        document.createTextNode(s.nombre),
+        el('small', { texto: TEXTO_SERVICIO[s.estado] || s.estado }),
+      ])
+    );
+  }
+}
+
+async function despertar() {
+  ultimoDespertar = Date.now();
+  try {
+    servicios = await enviar('/servicios/despertar', {});
+    firmaServicios = JSON.stringify(servicios);
+    pintarServicios();
+  } catch (e) {
+    mostrarAviso(e.message, 'mal');
+  }
+}
+
+function pausar() {
+  pausado = true;
+  $('bannerPausa').hidden = false;
+}
+
+function reanudar() {
+  pausado = false;
+  ultimaActividad = Date.now();
+  $('bannerPausa').hidden = true;
+  if (servicios.length > 0) despertar();
+  refrescar();
+}
+
 // ---------- Actualización periódica ----------
 
 function marcarConexion(texto, clase) {
@@ -280,7 +333,20 @@ function marcarConexion(texto, clase) {
 }
 
 async function refrescar() {
-  const [resProductos, resPedidos] = await Promise.allSettled([api('/productos'), api('/pedidos')]);
+  const [resProductos, resPedidos, resServicios] = await Promise.allSettled([
+    api('/productos'),
+    api('/pedidos'),
+    api('/servicios'),
+  ]);
+
+  if (resServicios.status === 'fulfilled') {
+    const firma = JSON.stringify(resServicios.value);
+    if (firma !== firmaServicios) {
+      firmaServicios = firma;
+      servicios = resServicios.value;
+      pintarServicios();
+    }
+  }
 
   if (resPedidos.status === 'fulfilled') {
     const firma = JSON.stringify(resPedidos.value);
@@ -344,6 +410,14 @@ $('formProducto').addEventListener('submit', async (evento) => {
   }
 });
 
+$('btnDespertar').addEventListener('click', despertar);
+$('btnReanudar').addEventListener('click', reanudar);
+
+// Cualquier uso de la página cuenta como actividad.
+for (const nombre of ['pointerdown', 'keydown', 'scroll', 'touchstart']) {
+  document.addEventListener(nombre, () => { ultimaActividad = Date.now(); });
+}
+
 $('selModo').addEventListener('change', () => {
   $('ayudaModo').textContent = AYUDA_MODO[$('selModo').value];
 });
@@ -372,7 +446,17 @@ if ('IntersectionObserver' in window) {
 $('ayudaModo').textContent = AYUDA_MODO[$('selModo').value];
 pintarFiltros();
 pintarPedidos();
-refrescar();
+refrescar().then(() => {
+  if (servicios.length > 0) despertar(); // en la nube: despierta a los demás servicios al abrir
+});
 setInterval(() => {
-  if (!document.hidden) refrescar();
+  if (document.hidden || pausado) return;
+  if (Date.now() - ultimaActividad > MINUTOS_SIN_ACTIVIDAD * 60 * 1000) {
+    pausar();
+    return;
+  }
+  if (servicios.length > 0 && Date.now() - ultimoDespertar > MINUTOS_ENTRE_DESPERTARES * 60 * 1000) {
+    despertar(); // mantiene despiertos a los servicios mientras alguien usa la página
+  }
+  refrescar();
 }, 2000);

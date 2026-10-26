@@ -12,10 +12,15 @@ import {
 import { ClientProxy, EventPattern, Payload } from '@nestjs/microservices';
 import { firstValueFrom, timeout } from 'rxjs';
 import { listar, registrarPedido, registrarTraza } from './historial.js';
+import { despertarServicios, listarServicios } from './servicios.js';
 import type { Modo } from './historial.js';
 
 type Producto = { id: number; nombre: string; stock: number };
 type Respuesta = { ok: boolean; error?: string; producto?: Producto };
+
+// Tiempos de espera (en la nube, un servicio dormido tarda cerca de 1 minuto en responder).
+const ESPERA_INVENTARIO_MS = Number(process.env.TIMEOUT_INVENTARIO_MS ?? 5000);
+const ESPERA_PEDIDO_MS = Number(process.env.TIMEOUT_PEDIDO_MS ?? 60000);
 
 // A dónde se envía el pedido según la forma de coordinar la Saga.
 const URL_PEDIDO: Record<Modo, string> = {
@@ -34,7 +39,7 @@ export class AppController {
   private async consultar<T>(patron: string, data: unknown): Promise<T> {
     try {
       return await firstValueFrom(
-        this.inventario.send<T>(patron, data).pipe(timeout(5000)),
+        this.inventario.send<T>(patron, data).pipe(timeout(ESPERA_INVENTARIO_MS)),
       );
     } catch {
       throw new ServiceUnavailableException(
@@ -95,15 +100,15 @@ export class AppController {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ productoId, cantidad }),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(ESPERA_PEDIDO_MS),
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       respuesta = (await r.json()) as { pedidoId?: unknown };
     } catch {
       throw new BadGatewayException(
         modo === 'coreografiada'
-          ? 'No responde PedidoService (puerto 3000). ¿Está arrancado?'
-          : 'No responde el Orquestador (puerto 3002). ¿Está arrancado?',
+          ? 'No responde PedidoService. ¿Está arrancado o todavía despertando?'
+          : 'No responde el Orquestador. ¿Está arrancado o todavía despertando?',
       );
     }
     if (typeof respuesta.pedidoId !== 'string') {
@@ -118,6 +123,19 @@ export class AppController {
       modo,
     });
     return { pedidoId: respuesta.pedidoId };
+  }
+
+  // Estado de los servicios en la nube (vacío en local).
+  @Get('servicios')
+  servicios() {
+    return listarServicios();
+  }
+
+  // Despierta a los servicios dormidos y devuelve el estado actual.
+  @Post('servicios/despertar')
+  despertar() {
+    despertarServicios();
+    return listarServicios();
   }
 
   @Get('pedidos')
