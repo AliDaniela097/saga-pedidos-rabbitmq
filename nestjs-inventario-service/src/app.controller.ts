@@ -50,6 +50,13 @@ export class AppController {
     if (!Number.isInteger(data.cantidad) || data.cantidad < 1) {
       return { ok: false, error: 'cantidad inválida' };
     }
+    // Idempotente: si el mismo pedido llega dos veces, no se descuenta dos veces.
+    if (datos.reservas[data.correlationId]) return { ok: true };
+    // Las reservas viejas ya no se compensan: se purgan para que el JSON no crezca sin fin.
+    const limite = Date.now() - 24 * 60 * 60 * 1000;
+    for (const [id, r] of Object.entries(datos.reservas)) {
+      if (r.creada !== undefined && r.creada < limite) delete datos.reservas[id];
+    }
     const producto = datos.productos.find((p) => p.id === data.productoId);
     if (!producto) return { ok: false, error: 'producto inexistente' };
     if (producto.stock < data.cantidad) {
@@ -59,6 +66,7 @@ export class AppController {
     datos.reservas[data.correlationId] = {
       productoId: producto.id,
       cantidad: data.cantidad,
+      creada: Date.now(),
     };
     guardar(datos);
     return { ok: true };
@@ -109,6 +117,10 @@ export class AppController {
         }),
       );
       this.traza('InventarioRechazado', data.correlationId, 'rejected', r.error);
+      this.pedidoClient.emit('inventario_rechazado', {
+        correlationId: data.correlationId,
+        error: r.error,
+      });
     }
   }
 

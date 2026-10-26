@@ -11,7 +11,7 @@ import { join } from 'node:path';
 // El archivo se crea solo la primera vez, en la carpeta "data" del proyecto.
 
 export type Producto = { id: number; nombre: string; stock: number };
-export type Reserva = { productoId: number; cantidad: number };
+export type Reserva = { productoId: number; cantidad: number; creada?: number };
 export type Datos = {
   siguienteId: number;
   productos: Producto[];

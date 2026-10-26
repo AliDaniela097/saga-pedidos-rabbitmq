@@ -3,7 +3,7 @@
 /* ============================================================
    SagaPedidos - lógica de la página.
    Flujo: esta página -> API del frontend (/api) -> RabbitMQ -> servicios.
-   La página consulta /api cada 2 segundos para mostrar los cambios.
+   La página consulta /api cada 2 segundos (cada 8 si no hay pedidos en proceso).
    ============================================================ */
 
 // ---------- Textos que ve el usuario ----------
@@ -30,6 +30,7 @@ const TEXTO_EVENTO = {
   OrqCompensarInventario: 'El orquestador ordenó liberar el inventario',
   OrqNotificar: 'El orquestador pidió notificar',
   PedidoRechazado: 'El orquestador rechazó el pedido',
+  CompensacionPendiente: 'No se pudo devolver el stock: queda pendiente de revisar',
   NotificacionFallida: 'No se pudo notificar al cliente',
 };
 
@@ -39,6 +40,7 @@ const CLASE_ESTADO = {
   Rechazado: 'aviso',
   'En proceso': 'info',
   'Pagado sin notificar': 'raro',
+  'Compensación pendiente': 'raro',
 };
 
 const FILTROS = ['Todos', 'En proceso', 'Confirmado', 'Cancelado', 'Rechazado'];
@@ -57,6 +59,9 @@ let firmaServicios = '';
 let ultimaActividad = Date.now();
 let pausado = false;
 let ultimoDespertar = 0;
+let manual = false; // el usuario pausó la actualización automática
+const propios = new Set(); // pedidos creados desde esta página
+const estadosVistos = new Map();
 
 // Para no gastar las horas del plan gratis: sin actividad se pausa la consulta automática.
 const MINUTOS_SIN_ACTIVIDAD = 20;
@@ -83,7 +88,12 @@ function el(etiqueta, opciones = {}, hijos = []) {
 }
 
 async function api(ruta, opciones) {
-  const respuesta = await fetch('/api' + ruta, opciones);
+  let respuesta;
+  try {
+    respuesta = await fetch('/api' + ruta, opciones);
+  } catch (e) {
+    throw new Error('No hay conexión con el servidor. Revisa tu red e inténtalo de nuevo.');
+  }
   let cuerpo = null;
   try {
     cuerpo = await respuesta.json();
@@ -105,13 +115,42 @@ function enviar(ruta, datos) {
   });
 }
 
+// Los éxitos se anuncian y desaparecen solos; los errores (role="alert") se quedan hasta cerrarlos.
 function mostrarAviso(texto, tipo) {
+  if (tipo === 'mal') {
+    $('textoError').textContent = texto;
+    $('avisoError').hidden = false;
+    return;
+  }
   const aviso = $('aviso');
   aviso.textContent = texto;
-  aviso.className = 'aviso' + (tipo === 'mal' ? ' mal' : '');
-  aviso.hidden = false;
   clearTimeout(temporizadorAviso);
-  temporizadorAviso = setTimeout(() => { aviso.hidden = true; }, 4500);
+  temporizadorAviso = setTimeout(() => { aviso.textContent = ''; }, 6000);
+}
+
+// Error junto al formulario, enlazado a sus campos con aria-describedby.
+function errorForm(idMensaje, idForm, texto) {
+  $(idMensaje).textContent = texto ? 'Error: ' + texto : '';
+  for (const campo of $(idForm).querySelectorAll('input, select')) {
+    if (texto) campo.setAttribute('aria-describedby', idMensaje);
+    else campo.removeAttribute('aria-describedby');
+  }
+}
+
+// Redibuja una lista sin que el teclado pierda su lugar: recuerda qué control tenía el foco.
+function conservandoFoco(contenedor, pintar) {
+  const clave = contenedor.contains(document.activeElement) ? document.activeElement.dataset.foco : null;
+  pintar();
+  if (clave) {
+    const nuevo = contenedor.querySelector('[data-foco="' + clave + '"]');
+    if (nuevo) nuevo.focus();
+  }
+}
+
+// Mientras se escribe en un campo de una lista, no se redibuja (se perdería lo escrito).
+function editando() {
+  const a = document.activeElement;
+  return !!a && (a.tagName === 'INPUT' || a.tagName === 'SELECT') && !!(a.closest('#grillaProductos') || a.id === 'selProducto');
 }
 
 function hora(iso) {
@@ -136,9 +175,14 @@ function tarjetaProducto(p) {
     clase: 'mini',
     atributos: { type: 'number', min: '1', max: '100000', value: '5', 'aria-label': 'Cantidad a reponer de ' + p.nombre },
   });
-  const boton = el('button', { clase: 'btn btn-claro btn-chico', texto: 'Reponer', atributos: { type: 'button' } });
+  const boton = el('button', {
+    clase: 'btn btn-claro btn-chico',
+    texto: 'Reponer',
+    atributos: { type: 'button', 'data-foco': 'rep-' + p.id, 'aria-label': 'Reponer stock de ' + p.nombre },
+  });
   boton.addEventListener('click', async () => {
-    boton.disabled = true;
+    if (boton.getAttribute('aria-busy') === 'true') return; // sin disabled: así el foco no se pierde
+    boton.setAttribute('aria-busy', 'true');
     try {
       await enviar('/productos/' + p.id + '/reponer', { cantidad: Number(entrada.value) });
       mostrarAviso('Stock repuesto: ' + p.nombre);
@@ -146,7 +190,7 @@ function tarjetaProducto(p) {
     } catch (e) {
       mostrarAviso(e.message, 'mal');
     } finally {
-      boton.disabled = false;
+      boton.removeAttribute('aria-busy');
     }
   });
 
@@ -166,11 +210,13 @@ function tarjetaProducto(p) {
 
 function pintarProductos() {
   const grilla = $('grillaProductos');
-  grilla.replaceChildren();
-  if (productos.length === 0) {
-    grilla.appendChild(el('p', { clase: 'vacio', texto: 'Todavía no hay productos. Crea el primero.' }));
-  }
-  for (const p of productos) grilla.appendChild(tarjetaProducto(p));
+  conservandoFoco(grilla, () => {
+    grilla.replaceChildren();
+    if (productos.length === 0) {
+      grilla.appendChild(el('p', { clase: 'vacio', texto: 'Todavía no hay productos. Crea el primero.' }));
+    }
+    for (const p of productos) grilla.appendChild(tarjetaProducto(p));
+  });
 
   // La lista desplegable del pedido conserva el producto elegido.
   const selector = $('selProducto');
@@ -187,13 +233,17 @@ function pintarProductos() {
 
 function pintarFiltros() {
   const contenedor = $('filtros');
+  conservandoFoco(contenedor, () => llenarFiltros(contenedor));
+}
+
+function llenarFiltros(contenedor) {
   contenedor.replaceChildren();
   for (const nombre of FILTROS) {
     const cantidad = nombre === 'Todos' ? pedidos.length : pedidos.filter((p) => p.estado === nombre).length;
     const boton = el('button', {
       clase: 'filtro' + (nombre === filtroActual ? ' on' : ''),
       texto: nombre + ' (' + cantidad + ')',
-      atributos: { type: 'button', 'aria-pressed': String(nombre === filtroActual) },
+      atributos: { type: 'button', 'aria-pressed': String(nombre === filtroActual), 'data-foco': 'flt-' + nombre },
     });
     boton.addEventListener('click', () => {
       filtroActual = nombre;
@@ -239,7 +289,7 @@ function tarjetaPedido(pedido) {
   const boton = el('button', {
     clase: 'btn btn-claro btn-chico',
     texto: abierto ? 'Ocultar recorrido' : 'Ver recorrido',
-    atributos: { type: 'button', 'aria-expanded': String(abierto) },
+    atributos: { type: 'button', 'aria-expanded': String(abierto), 'data-foco': 'alt-' + pedido.pedidoId },
   });
   boton.addEventListener('click', () => {
     if (abiertos.has(pedido.pedidoId)) abiertos.delete(pedido.pedidoId);
@@ -263,15 +313,17 @@ function tarjetaPedido(pedido) {
 
 function pintarPedidos() {
   const lista = $('listaPedidos');
-  lista.replaceChildren();
-  const visibles = pedidos.filter((p) => filtroActual === 'Todos' || p.estado === filtroActual);
-  if (visibles.length === 0) {
-    lista.appendChild(
-      el('p', { clase: 'vacio', texto: pedidos.length === 0 ? 'Todavía no hay pedidos. Crea el primero arriba.' : 'No hay pedidos con ese estado.' })
-    );
-    return;
-  }
-  for (const pedido of visibles) lista.appendChild(tarjetaPedido(pedido));
+  conservandoFoco(lista, () => {
+    lista.replaceChildren();
+    const visibles = pedidos.filter((p) => filtroActual === 'Todos' || p.estado === filtroActual);
+    if (visibles.length === 0) {
+      lista.appendChild(
+        el('p', { clase: 'vacio', texto: pedidos.length === 0 ? 'Todavía no hay pedidos. Crea el primero arriba.' : 'No hay pedidos con ese estado.' })
+      );
+      return;
+    }
+    for (const pedido of visibles) lista.appendChild(tarjetaPedido(pedido));
+  });
 }
 
 function pintarCifras() {
@@ -332,6 +384,17 @@ function marcarConexion(texto, clase) {
   chip.className = 'conexion ' + clase;
 }
 
+// Avisa (una sola vez) cuando un pedido creado desde esta página llega a su estado final.
+function anunciarResultados() {
+  for (const p of pedidos) {
+    const antes = estadosVistos.get(p.pedidoId);
+    estadosVistos.set(p.pedidoId, p.estado);
+    if (propios.has(p.pedidoId) && antes && antes !== p.estado && p.estado !== 'En proceso') {
+      mostrarAviso('Pedido ' + p.pedidoId + ': ' + p.estado);
+    }
+  }
+}
+
 async function refrescar() {
   const [resProductos, resPedidos, resServicios] = await Promise.allSettled([
     api('/productos'),
@@ -353,12 +416,13 @@ async function refrescar() {
     if (firma !== firmaPedidos) {
       firmaPedidos = firma;
       pedidos = resPedidos.value;
+      anunciarResultados();
       pintarFiltros();
       pintarPedidos();
       pintarCifras();
     }
   }
-  if (resProductos.status === 'fulfilled') {
+  if (resProductos.status === 'fulfilled' && !editando()) {
     const firma = JSON.stringify(resProductos.value);
     if (firma !== firmaProductos) {
       firmaProductos = firma;
@@ -377,7 +441,10 @@ async function refrescar() {
 $('formPedido').addEventListener('submit', async (evento) => {
   evento.preventDefault();
   const boton = $('btnPedido');
+  errorForm('errPedido', 'formPedido', '');
   boton.disabled = true;
+  boton.textContent = 'Creando… (puede tardar si los servicios están despertando)';
+  $('formPedido').setAttribute('aria-busy', 'true');
   try {
     const resultado = await enviar('/pedidos', {
       productoId: Number($('selProducto').value),
@@ -385,17 +452,24 @@ $('formPedido').addEventListener('submit', async (evento) => {
       modo: $('selModo').value,
     });
     abiertos.add(resultado.pedidoId); // se muestra su recorrido abierto
+    propios.add(resultado.pedidoId);
     mostrarAviso('Pedido ' + resultado.pedidoId + ' creado. Mira su recorrido en la sección Pedidos.');
     await refrescar();
   } catch (e) {
-    mostrarAviso(e.message, 'mal');
+    errorForm('errPedido', 'formPedido', e.message);
   } finally {
     boton.disabled = false;
+    boton.textContent = 'Crear pedido';
+    $('formPedido').removeAttribute('aria-busy');
+    boton.focus();
   }
 });
 
 $('formProducto').addEventListener('submit', async (evento) => {
   evento.preventDefault();
+  const boton = $('btnProducto');
+  errorForm('errProducto', 'formProducto', '');
+  boton.disabled = true;
   try {
     const creado = await enviar('/productos', {
       nombre: $('inpNombre').value,
@@ -406,9 +480,25 @@ $('formProducto').addEventListener('submit', async (evento) => {
     mostrarAviso('Producto creado: ' + creado.nombre);
     await refrescar();
   } catch (e) {
-    mostrarAviso(e.message, 'mal');
+    errorForm('errProducto', 'formProducto', e.message);
+  } finally {
+    boton.disabled = false;
+    boton.focus();
   }
 });
+
+$('btnCerrarError').addEventListener('click', () => { $('avisoError').hidden = true; });
+$('btnAuto').addEventListener('click', () => {
+  manual = !manual;
+  $('btnAuto').setAttribute('aria-pressed', String(manual));
+  $('btnAuto').textContent = manual ? 'Reanudar actualización' : 'Pausar actualización';
+  mostrarAviso(manual ? 'Actualización automática en pausa.' : 'Actualización automática activa.');
+  if (!manual) refrescar();
+});
+
+// Un error de JavaScript no previsto no debe dejar la página muda.
+window.addEventListener('error', () => mostrarAviso('Ocurrió un error inesperado en la página. Recárgala si algo no responde.', 'mal'));
+window.addEventListener('unhandledrejection', () => mostrarAviso('Ocurrió un error inesperado en la página. Recárgala si algo no responde.', 'mal'));
 
 $('btnDespertar').addEventListener('click', despertar);
 $('btnReanudar').addEventListener('click', reanudar);
@@ -424,6 +514,7 @@ $('selModo').addEventListener('change', () => {
 
 // Resalta en la barra la sección que se está viendo.
 const enlaces = Array.from(document.querySelectorAll('.pill'));
+enlaces[0].setAttribute('aria-current', 'location');
 const secciones = enlaces.map((a) => document.querySelector(a.getAttribute('href')));
 if ('IntersectionObserver' in window) {
   const observador = new IntersectionObserver(
@@ -431,7 +522,10 @@ if ('IntersectionObserver' in window) {
       for (const entrada of entradas) {
         if (entrada.isIntersecting) {
           for (const a of enlaces) {
-            a.classList.toggle('activo', a.getAttribute('href') === '#' + entrada.target.id);
+            const activo = a.getAttribute('href') === '#' + entrada.target.id;
+            a.classList.toggle('activo', activo);
+            if (activo) a.setAttribute('aria-current', 'location');
+            else a.removeAttribute('aria-current');
           }
         }
       }
@@ -449,14 +543,24 @@ pintarPedidos();
 refrescar().then(() => {
   if (servicios.length > 0) despertar(); // en la nube: despierta a los demás servicios al abrir
 });
-setInterval(() => {
-  if (document.hidden || pausado) return;
-  if (Date.now() - ultimaActividad > MINUTOS_SIN_ACTIVIDAD * 60 * 1000) {
-    pausar();
-    return;
+
+// Una consulta termina antes de programar la siguiente (no se encimen). Cada 2 s mientras haya
+// pedidos en proceso; en reposo, cada 8 s para gastar menos mensajes del plan gratis.
+async function ciclo() {
+  try {
+    if (!document.hidden && !pausado && !manual) {
+      if (Date.now() - ultimaActividad > MINUTOS_SIN_ACTIVIDAD * 60 * 1000) {
+        pausar();
+      } else {
+        if (servicios.length > 0 && Date.now() - ultimoDespertar > MINUTOS_ENTRE_DESPERTARES * 60 * 1000) {
+          despertar(); // mantiene despiertos a los servicios mientras alguien usa la página
+        }
+        await refrescar();
+      }
+    }
+  } catch (e) {
+    marcarConexion('Sin conexión con el servidor', 'mal');
   }
-  if (servicios.length > 0 && Date.now() - ultimoDespertar > MINUTOS_ENTRE_DESPERTARES * 60 * 1000) {
-    despertar(); // mantiene despiertos a los servicios mientras alguien usa la página
-  }
-  refrescar();
-}, 2000);
+  setTimeout(ciclo, pedidos.some((p) => p.estado === 'En proceso') ? 2000 : 8000);
+}
+setTimeout(ciclo, 2000);

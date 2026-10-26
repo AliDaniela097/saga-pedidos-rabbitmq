@@ -7,6 +7,24 @@ import { despertarServicios } from './servicios.js';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Cabeceras de seguridad (sin dependencias nuevas). La CSP solo permite lo que usa la página:
+  // sus propios archivos y las fuentes de Google.
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.disable('x-powered-by');
+  expressApp.use((_req: any, res: any, next: any) => {
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; style-src 'self' https://fonts.googleapis.com; " +
+        "font-src https://fonts.gstatic.com; img-src 'self' data:; " +
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+    );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    next();
+  });
+  app.enableShutdownHooks();
   // La página web (carpeta public) se sirve desde este mismo servidor.
   app.useStaticAssets(join(process.cwd(), 'public'));
   // Ruta de salud: sirve para comprobar (y despertar) el servicio en la nube.

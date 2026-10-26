@@ -36,6 +36,7 @@ Valores iguales en los seis:
 | Instance Type | Free |
 | Variable `RABBITMQ_URL` | la AMQP URL del paso 1 |
 | Variable `NODE_VERSION` | `24` |
+| Variable `INTERNAL_TOKEN` (solo en `saga-pedido`, `saga-orquestador` y `saga-frontend`) | un texto largo y aleatorio, **el mismo en los tres**. Hace que Pedido y Orquestador rechacen (401) a quien no sea el frontend |
 
 Valores propios de cada servicio. Créalos en este orden:
 
@@ -62,6 +63,7 @@ Variables del frontend (créalo al final, cuando ya tengas las demás URL):
 | `SALUD_PAGO` | `https://<url de saga-pago>/health` |
 | `SALUD_NOTIFICACIONES` | `https://<url de saga-notificaciones>/health` |
 | `TIMEOUT_INVENTARIO_MS` | `30000` |
+| `TIMEOUT_PEDIDO_MS` | `120000` (debe ser mayor que 3 × `TIMEOUT_MS` del orquestador; si es menor, el frontend da error aunque el pedido siga en marcha) |
 
 ## Paso 3. Probar
 

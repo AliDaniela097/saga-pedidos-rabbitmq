@@ -4,12 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SagaPedidos</title>
+  <meta name="description" content="Crea pedidos y mira cómo viaja cada evento en una Saga con RabbitMQ: coreografía, orquestación y compensación.">
+  <meta name="theme-color" content="#f2f2ef">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23140c0c'/%3E%3Crect x='9' y='9' width='14' height='14' rx='4' fill='%23f2f2ef'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
   <div class="contenedor">
 
     <!-- ===== Barra superior ===== -->
@@ -23,7 +27,7 @@
         <a class="pill" href="#como-funciona">Cómo funciona</a>
       </nav>
       <div class="nav-derecha">
-        <span class="conexion" id="estadoConexion">Conectando…</span>
+        <span class="conexion" id="estadoConexion" role="status">Conectando…</span>
         <a class="btn btn-oscuro" href="#pedido">Nuevo pedido</a>
       </div>
     </header>
@@ -33,8 +37,10 @@
       <button class="btn btn-oscuro btn-chico" id="btnReanudar" type="button">Reanudar</button>
     </div>
 
+    <main id="contenido" tabindex="-1">
+
     <!-- ===== Inicio ===== -->
-    <section class="hero" id="inicio">
+    <section class="hero" id="inicio" aria-labelledby="t-inicio">
       <div class="visual">
         <div class="chips-top">
           <span class="chip-vidrio">Coreografía</span>
@@ -54,7 +60,7 @@
       </div>
 
       <div class="hero-texto">
-        <h1>Crea pedidos y mira cómo viaja cada evento</h1>
+        <h1 id="t-inicio">Crea pedidos y mira cómo viaja cada evento</h1>
         <div class="etiquetas">
           <span class="etiqueta destacada">Eventos</span>
           <span class="etiqueta">Saga</span>
@@ -81,9 +87,9 @@
     </section>
 
     <!-- ===== Hacer pedido ===== -->
-    <section class="buscador" id="pedido">
-      <h2>Haz un pedido</h2>
-      <form id="formPedido" class="campos" autocomplete="off">
+    <section class="buscador" id="pedido" aria-labelledby="t-pedido">
+      <h2 id="t-pedido">Haz un pedido</h2>
+      <form id="formPedido" class="campos" autocomplete="off" aria-describedby="errPedido ayudaModo">
         <label>Producto
           <select id="selProducto" required></select>
         </label>
@@ -98,6 +104,7 @@
         </label>
         <button class="btn btn-oscuro btn-grande" id="btnPedido" type="submit">Crear pedido</button>
       </form>
+      <p class="error-form" id="errPedido" role="alert"></p>
       <p class="ayuda" id="ayudaModo"></p>
 
       <div class="servicios" id="panelServicios" hidden>
@@ -111,13 +118,13 @@
     </section>
 
     <!-- ===== Productos ===== -->
-    <section class="seccion" id="productos">
+    <section class="seccion" id="productos" aria-labelledby="t-productos">
       <div class="seccion-cabecera">
-        <h2>Productos</h2>
+        <h2 id="t-productos">Productos</h2>
         <p>Los guarda el servicio de Inventario en <code>data/inventario.json</code>.</p>
       </div>
       <div class="productos-layout">
-        <form class="tarjeta formulario-producto" id="formProducto" autocomplete="off">
+        <form class="tarjeta formulario-producto" id="formProducto" autocomplete="off" aria-describedby="errProducto">
           <h3>Nuevo producto</h3>
           <label>Nombre
             <input id="inpNombre" type="text" maxlength="60" placeholder="Ej. Audífonos" required>
@@ -125,26 +132,28 @@
           <label>Stock inicial
             <input id="inpStock" type="number" min="0" max="100000" value="10" required>
           </label>
-          <button class="btn btn-oscuro" type="submit">Crear producto</button>
+          <p class="error-form" id="errProducto" role="alert"></p>
+          <button class="btn btn-oscuro" id="btnProducto" type="submit">Crear producto</button>
         </form>
-        <div class="grilla-productos" id="grillaProductos" aria-live="polite"></div>
+        <div class="grilla-productos" id="grillaProductos"></div>
       </div>
     </section>
 
     <!-- ===== Pedidos ===== -->
-    <section class="seccion" id="pedidos">
+    <section class="seccion" id="pedidos" aria-labelledby="t-pedidos">
       <div class="seccion-cabecera">
-        <h2>Pedidos</h2>
+        <h2 id="t-pedidos">Pedidos</h2>
         <p>Se actualiza solo. Abre un pedido para ver el recorrido de sus eventos.</p>
+        <button class="btn btn-claro btn-chico" id="btnAuto" type="button" aria-pressed="false">Pausar actualización</button>
       </div>
       <div class="filtros" id="filtros" role="group" aria-label="Filtrar por estado"></div>
-      <div class="lista-pedidos" id="listaPedidos" aria-live="polite"></div>
+      <div class="lista-pedidos" id="listaPedidos"></div>
     </section>
 
     <!-- ===== Cómo funciona ===== -->
-    <section class="seccion" id="como-funciona">
+    <section class="seccion" id="como-funciona" aria-labelledby="t-como">
       <div class="seccion-cabecera">
-        <h2>Cómo funciona</h2>
+        <h2 id="t-como">Cómo funciona</h2>
         <p>Esta pantalla no hace la Saga: solo la muestra.</p>
       </div>
       <div class="tres">
@@ -176,10 +185,16 @@
       </div>
     </section>
 
+    </main>
+
     <footer class="pie">Taller semana 6 · Integración de Sistemas · NestJS + RabbitMQ</footer>
   </div>
 
-  <div class="aviso" id="aviso" role="status" aria-live="polite" hidden></div>
+  <div class="aviso" id="aviso" role="status" aria-live="polite"></div>
+  <div class="aviso mal" id="avisoError" role="alert" hidden>
+    <span id="textoError"></span>
+    <button class="aviso-cerrar" id="btnCerrarError" type="button" aria-label="Cerrar aviso">×</button>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>

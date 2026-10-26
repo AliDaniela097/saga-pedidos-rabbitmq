@@ -140,6 +140,7 @@ export function registrarTraza(entrada: unknown): void {
 // El estado se DEDUCE de los eventos que ya ocurrieron (consistencia eventual).
 export function estadoDe(pasos: Paso[]): string {
   const hay = (...eventos: string[]) => pasos.some((p) => eventos.includes(p.event));
+  if (hay('CompensacionPendiente')) return 'Compensación pendiente';
   if (hay('PedidoCancelado')) return 'Cancelado';
   if (hay('InventarioRechazado', 'PedidoRechazado')) return 'Rechazado';
   if (hay('NotificacionFallida')) return 'Pagado sin notificar';

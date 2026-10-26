@@ -20,7 +20,11 @@ type Respuesta = { ok: boolean; error?: string; producto?: Producto };
 
 // Tiempos de espera (en la nube, un servicio dormido tarda cerca de 1 minuto en responder).
 const ESPERA_INVENTARIO_MS = Number(process.env.TIMEOUT_INVENTARIO_MS ?? 5000);
-const ESPERA_PEDIDO_MS = Number(process.env.TIMEOUT_PEDIDO_MS ?? 60000);
+// Debe superar el peor caso del orquestador: pasos × TIMEOUT_MS (3 × 30 s en la nube).
+const ESPERA_PEDIDO_MS = Number(process.env.TIMEOUT_PEDIDO_MS ?? 120000);
+// La lista de productos se reutiliza unos segundos para no preguntar a Inventario (y a RabbitMQ) en cada sondeo.
+const VIDA_CACHE_MS = 3000;
+let cacheProductos: { en: number; datos: Producto[] } | null = null;
 
 // A dónde se envía el pedido según la forma de coordinar la Saga.
 const URL_PEDIDO: Record<Modo, string> = {
@@ -48,9 +52,18 @@ export class AppController {
     }
   }
 
+  private async listarProductos(): Promise<Producto[]> {
+    if (cacheProductos && Date.now() - cacheProductos.en < VIDA_CACHE_MS) {
+      return cacheProductos.datos;
+    }
+    const datos = await this.consultar<Producto[]>('listar_productos', {});
+    cacheProductos = { en: Date.now(), datos };
+    return datos;
+  }
+
   @Get('productos')
   productos() {
-    return this.consultar<Producto[]>('listar_productos', {});
+    return this.listarProductos();
   }
 
   @Post('productos')
@@ -60,16 +73,19 @@ export class AppController {
       stock: body?.stock,
     });
     if (!r.ok) throw new BadRequestException(r.error);
+    cacheProductos = null;
     return r.producto;
   }
 
   @Post('productos/:id/reponer')
   async reponer(@Param('id') id: string, @Body() body: { cantidad?: unknown }) {
+    if (!/^\d{1,9}$/.test(id)) throw new BadRequestException('Producto no válido');
     const r = await this.consultar<Respuesta>('reponer_stock', {
       id: Number(id),
       cantidad: body?.cantidad,
     });
     if (!r.ok) throw new BadRequestException(r.error);
+    cacheProductos = null;
     return r.producto;
   }
 
@@ -77,8 +93,11 @@ export class AppController {
   async crearPedido(
     @Body() body: { productoId?: unknown; cantidad?: unknown; modo?: unknown },
   ) {
-    const productoId = Number(body?.productoId);
-    const cantidad = Number(body?.cantidad);
+    // Solo números o texto numérico: Number(true), Number([2]) o Number(null) no son entradas válidas.
+    const comoNumero = (v: unknown) =>
+      typeof v === 'number' || (typeof v === 'string' && v.trim() !== '') ? Number(v) : NaN;
+    const productoId = comoNumero(body?.productoId);
+    const cantidad = comoNumero(body?.cantidad);
     const modo = body?.modo;
     if (!Number.isInteger(productoId) || productoId < 1) {
       throw new BadRequestException('Elige un producto');
@@ -90,7 +109,7 @@ export class AppController {
       throw new BadRequestException('El modo debe ser coreografiada u orquestada');
     }
 
-    const productos = await this.consultar<Producto[]>('listar_productos', {});
+    const productos = await this.listarProductos();
     const producto = productos.find((p) => p.id === productoId);
     if (!producto) throw new BadRequestException('El producto no existe');
 
@@ -98,7 +117,11 @@ export class AppController {
     try {
       const r = await fetch(URL_PEDIDO[modo], {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // Si el entorno define INTERNAL_TOKEN, Pedido y Orquestador solo aceptan a quien lo conoce.
+          ...(process.env.INTERNAL_TOKEN && { 'x-internal-token': process.env.INTERNAL_TOKEN }),
+        },
         body: JSON.stringify({ productoId, cantidad }),
         signal: AbortSignal.timeout(ESPERA_PEDIDO_MS),
       });

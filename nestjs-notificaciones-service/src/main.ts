@@ -31,6 +31,7 @@ async function bootstrap() {
       queueOptions: { durable: false },
     },
   });
+  app.enableShutdownHooks(); // en un despliegue (SIGTERM) cierra las conexiones con orden
   await app.listen();
   conectado = true;
   console.log('NotificacionesService escuchando en notificaciones_queue');

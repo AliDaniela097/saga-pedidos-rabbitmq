@@ -57,7 +57,8 @@ Guía paso a paso en [DESPLIEGUE.md](DESPLIEGUE.md): RabbitMQ en CloudAMQP y los
 | `TIMEOUT_MS` | Espera del Orquestador por cada servicio | 5000 |
 | `PEDIDO_URL`, `ORQUESTADOR_URL` | A dónde envía el frontend los pedidos | `localhost:3000` y `localhost:3002` |
 | `SALUD_PEDIDO`, `SALUD_ORQUESTADOR`, `SALUD_INVENTARIO`, `SALUD_PAGO`, `SALUD_NOTIFICACIONES` | Rutas `/health` que el frontend usa para despertar y vigilar los servicios | sin definir (el panel no aparece) |
-| `TIMEOUT_INVENTARIO_MS`, `TIMEOUT_PEDIDO_MS` | Esperas del frontend | 5000 y 60000 |
+| `TIMEOUT_INVENTARIO_MS`, `TIMEOUT_PEDIDO_MS` | Esperas del frontend | 5000 y 120000 |
+| `INTERNAL_TOKEN` | Si se define (igual en Pedido, Orquestador y Frontend), Pedido y Orquestador exigen la cabecera `x-internal-token` | sin definir (sin control) |
 
 Cada servicio responde `GET /health` para poder comprobarlo o despertarlo.
 

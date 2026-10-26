@@ -1,15 +1,32 @@
-import { BadRequestException, Body, Controller, Inject, Post } from '@nestjs/common';
-import { ClientProxy } from '@nestjs/microservices';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Headers,
+  Inject,
+  Post,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { ClientProxy, RmqRecordBuilder } from '@nestjs/microservices';
 import { randomUUID } from 'crypto';
-import { firstValueFrom, timeout } from 'rxjs';
+import { firstValueFrom, timeout, TimeoutError } from 'rxjs';
 
-type Resultado = { ok: boolean; error?: string };
+// desconocido = no hubo respuesta a tiempo: el paso pudo haberse aplicado o no.
+type Resultado = { ok: boolean; error?: string; desconocido?: boolean };
 
 // Cuánto espera el orquestador la respuesta de cada servicio (en la nube, si un
 // servicio está dormido, conviene subirlo con la variable TIMEOUT_MS).
 const TIEMPO_ESPERA_MS = Number(process.env.TIMEOUT_MS ?? 5000);
 
 const PEDIDOS: Record<string, any> = {};
+const MAXIMO_PEDIDOS = 1000; // los más antiguos se descartan para que la memoria no crezca sin fin
+const INTENTOS_COMPENSACION = 3;
+
+// Si INTERNAL_TOKEN existe, solo quien lo conoce (el frontend) puede crear pedidos.
+function exigirToken(token?: string) {
+  const esperado = process.env.INTERNAL_TOKEN;
+  if (esperado && token !== esperado) throw new UnauthorizedException();
+}
 
 function registrar(data: Record<string, unknown>) {
   console.log(
@@ -55,37 +72,63 @@ export class AppController {
 
   // send() = preguntar y ESPERAR la respuesta del servicio destino.
   // Si el servicio no responde a tiempo o falla, se trata como un paso fallido.
+  // El mensaje caduca en la cola al mismo tiempo que la espera del orquestador: así un
+  // servicio dormido no lo procesa tarde, cuando el pedido ya se dio por terminado.
   private async llamar(
     client: ClientProxy,
     patron: string,
     data: unknown,
   ): Promise<Resultado> {
     try {
+      const mensaje = new RmqRecordBuilder(data)
+        .setOptions({ expiration: String(TIEMPO_ESPERA_MS) })
+        .build();
       return await firstValueFrom(
-        client.send<Resultado>(patron, data).pipe(timeout(TIEMPO_ESPERA_MS)),
+        client.send<Resultado>(patron, mensaje).pipe(timeout(TIEMPO_ESPERA_MS)),
       );
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      // El detalle técnico queda en el log; al cliente solo llega un texto genérico.
+      registrar({ paso: patron, status: 'error', error: String(e) });
+      return e instanceof TimeoutError
+        ? { ok: false, desconocido: true, error: 'el servicio no respondió a tiempo' }
+        : { ok: false, error: 'el servicio no está disponible' };
     }
+  }
+
+  // Compensación con reintentos: liberar es idempotente, así que repetirla es seguro.
+  private async liberarInventario(correlationId: string): Promise<Resultado> {
+    let ultimo: Resultado = { ok: false };
+    for (let i = 0; i < INTENTOS_COMPENSACION && !ultimo.ok; i++) {
+      ultimo = await this.llamar(this.inventarioClient, 'orq_liberar_inventario', {
+        correlationId,
+      });
+    }
+    return ultimo;
   }
 
   @Post()
   async crearPedidoOrquestado(
     @Body() body: { productoId: number; cantidad: number },
+    @Headers('x-internal-token') token?: string,
   ) {
+    exigirToken(token);
     if (
       !Number.isInteger(body?.productoId) ||
       !Number.isInteger(body?.cantidad) ||
-      body.cantidad < 1
+      body.productoId < 1 ||
+      body.cantidad < 1 ||
+      body.cantidad > 1000
     ) {
       throw new BadRequestException(
-        'productoId y cantidad deben ser enteros, y cantidad mayor que 0',
+        'productoId debe ser un entero positivo y cantidad un entero entre 1 y 1000',
       );
     }
     const { productoId, cantidad } = body;
     const correlationId = 'cid-' + randomUUID().slice(0, 8);
     const pedido = { pedidoId: correlationId, productoId, cantidad, estado: 'Creado' };
     PEDIDOS[correlationId] = pedido;
+    const ids = Object.keys(PEDIDOS);
+    if (ids.length > MAXIMO_PEDIDOS) delete PEDIDOS[ids[0]];
     const datos = { correlationId, productoId, cantidad };
     this.traza(
       'PedidoCreado',
@@ -113,7 +156,9 @@ export class AppController {
       reserva.error,
     );
     if (!reserva.ok) {
-      pedido.estado = 'Rechazado'; // no hay nada que compensar todavía
+      // Si no hubo respuesta, la reserva pudo aplicarse: se libera por si acaso (idempotente).
+      if (reserva.desconocido) await this.liberarInventario(correlationId);
+      pedido.estado = 'Rechazado';
       this.traza('PedidoRechazado', correlationId, 'error', reserva.error);
       return pedido;
     }
@@ -134,11 +179,7 @@ export class AppController {
     );
     if (!pago.ok) {
       // El ORQUESTADOR decide la compensación del paso anterior.
-      const liberar = await this.llamar(
-        this.inventarioClient,
-        'orq_liberar_inventario',
-        { correlationId },
-      );
+      const liberar = await this.liberarInventario(correlationId);
       registrar({
         correlation_id: correlationId,
         paso: 'compensar_inventario',
@@ -151,6 +192,12 @@ export class AppController {
         liberar.ok ? 'compensated' : 'error',
         liberar.error,
       );
+      if (!liberar.ok) {
+        // No se pudo devolver el stock: no se declara Cancelado, queda para reconciliar.
+        pedido.estado = 'CompensacionPendiente';
+        this.traza('CompensacionPendiente', correlationId, 'error', liberar.error);
+        return pedido;
+      }
       pedido.estado = 'Cancelado';
       this.traza(
         'PedidoCancelado',
